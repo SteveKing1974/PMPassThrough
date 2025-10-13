@@ -30,6 +30,7 @@ ui_*.h
 Makefile*
 *build-*
 *.qm
+*build
 *.prl
 
 # Qt unit tests

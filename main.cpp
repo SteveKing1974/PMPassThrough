@@ -86,19 +86,21 @@ int main(int argc, char *argv[])
 
     QLowEnergyCharacteristicData powerMeasurementCharData;
     powerMeasurementCharData.setUuid(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement);
-    powerMeasurementCharData.setValue(QByteArray(4, 0));
-    powerMeasurementCharData.setProperties(QLowEnergyCharacteristic::Notify);
+    powerMeasurementCharData.setValue(QByteArray(8, 0));
+    powerMeasurementCharData.setProperties(QLowEnergyCharacteristic::Notify | QLowEnergyCharacteristic::Read);
     const QLowEnergyDescriptorData pmClientConfig(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration,
-                                                QByteArray(4, 0));
+                                                QByteArray(8, 0));
     powerMeasurementCharData.addDescriptor(pmClientConfig);
     serviceData.addCharacteristic(powerMeasurementCharData);
 
     QLowEnergyCharacteristicData featureCharData;
+    QByteArray ft(4,0);
+    ft[0] = 8;
     featureCharData.setUuid(QBluetoothUuid::CharacteristicType::CyclingPowerFeature);
-    featureCharData.setValue(QByteArray(2, 0));
+    featureCharData.setValue(ft);
     featureCharData.setProperties(QLowEnergyCharacteristic::Read);
     const QLowEnergyDescriptorData clientConfig(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration,
-                                                QByteArray(2, 0));
+                                                ft);
     featureCharData.addDescriptor(clientConfig);
     serviceData.addCharacteristic(featureCharData);
 
@@ -127,6 +129,12 @@ int main(int argc, char *argv[])
     };
     QObject::connect(leController.get(), &QLowEnergyController::errorOccurred, errorHandler);
 
+
+    QBluetoothDeviceInfo blah;
+    const std::unique_ptr<QLowEnergyController> leCentral(QLowEnergyController::createCentral(blah));
+    qDebug() << leCentral->localAddress();
+
+
     std::unique_ptr<QLowEnergyService> service(leController->addService(serviceData));
     leController->startAdvertising(QLowEnergyAdvertisingParameters(), advertisingData,
                                    advertisingData);
@@ -138,10 +146,13 @@ int main(int argc, char *argv[])
     QTimer powermeterTimer;
     qint16 currentPower = 60;
     enum ValueChange { ValueUp, ValueDown } valueChange = ValueUp;
-    const auto powerProvider = [&service, &currentPower, &valueChange]() {
+    quint16 t = 0;
+    const auto powerProvider = [&service, &currentPower, &valueChange, &t]() {
         QByteArray value;
         QDataStream s(&value, QIODeviceBase::WriteOnly);
-        s << quint16(0) << currentPower;
+        s.setByteOrder(QDataStream::LittleEndian);
+        s << quint16(0x20) << currentPower << t << (t++)*1024;
+        qDebug() << value;
         QLowEnergyCharacteristic characteristic
             = service->characteristic(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement);
         Q_ASSERT(characteristic.isValid());
