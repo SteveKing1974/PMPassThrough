@@ -59,6 +59,7 @@ signals:
     void measuringChanged();
     void aliveChanged();
     void statsChanged();
+    void exit();
 
 public slots:
     void startMeasurement();
@@ -78,7 +79,7 @@ private:
     QVariant devices();
     //QLowEnergyService
     void serviceStateChanged(QLowEnergyService::ServiceState s);
-    void updateHeartRateValue(const QLowEnergyCharacteristic &c,
+    void updatePowerValue(const QLowEnergyCharacteristic &c,
                               const QByteArray &value);
     void confirmedDescriptorWrite(const QLowEnergyDescriptor &d,
                                   const QByteArray &value);
@@ -93,7 +94,7 @@ private:
     QLowEnergyDescriptor m_notificationDesc;
     QBluetoothDeviceInfo* m_currentDevice;
 
-    bool m_foundHeartRateService = false;
+    bool m_foundPowerService = false;
     bool m_measuring = false;
     int m_currentValue = 0, m_min = 0, m_max = 0, m_sum = 0;
     float m_avg = 0, m_calories = 0;
