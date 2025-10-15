@@ -12,10 +12,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Bluetooth Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Bluetooth Core)
 
+find_package(Qt6 REQUIRED COMPONENTS Core)
+
 add_executable(PMPassThrough
   main.cpp
+  powersender.h powersender.cpp
+  powerreceiver.h powerreceiver.cpp
 )
-target_link_libraries(PMPassThrough Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Bluetooth)
+target_link_libraries(PMPassThrough PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Bluetooth)
 
 include(GNUInstallDirs)
 install(TARGETS PMPassThrough
