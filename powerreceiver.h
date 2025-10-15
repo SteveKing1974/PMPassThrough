@@ -18,16 +18,6 @@ class PowerReceiver : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(bool measuring READ measuring NOTIFY measuringChanged)
-    Q_PROPERTY(bool alive READ alive NOTIFY aliveChanged)
-    Q_PROPERTY(int hr READ hr NOTIFY statsChanged)
-    Q_PROPERTY(int maxHR READ maxHR NOTIFY statsChanged)
-    Q_PROPERTY(int minHR READ minHR NOTIFY statsChanged)
-    Q_PROPERTY(float average READ average NOTIFY statsChanged)
-    Q_PROPERTY(int time READ time NOTIFY statsChanged)
-    Q_PROPERTY(float calories READ calories NOTIFY statsChanged)
-    Q_PROPERTY(AddressType addressType READ addressType WRITE setAddressType)
-
 public:
     enum class AddressType {
         PublicAddress,
@@ -47,23 +37,11 @@ public:
     bool alive() const;
     int m_picked;
 
-    // Statistics
-    int hr() const;
-    int time() const;
-    float average() const;
-    int maxHR() const;
-    int minHR() const;
-    float calories() const;
 
 signals:
-    void measuringChanged();
-    void aliveChanged();
-    void statsChanged();
     void exit();
 
 public slots:
-    void startMeasurement();
-    void stopMeasurement();
     void disconnectService();
     void addDevice(const QBluetoothDeviceInfo &device);
     void scanError(QBluetoothDeviceDiscoveryAgent::Error error);
@@ -94,7 +72,7 @@ private:
     QLowEnergyDescriptor m_notificationDesc;
     QBluetoothDeviceInfo* m_currentDevice;
 
-    bool m_foundPowerService = false;
+    QSet<QBluetoothUuid> m_gatts;
     bool m_measuring = false;
     int m_currentValue = 0, m_min = 0, m_max = 0, m_sum = 0;
     float m_avg = 0, m_calories = 0;

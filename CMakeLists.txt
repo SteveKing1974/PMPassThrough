@@ -13,13 +13,16 @@ find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Bluetooth Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Bluetooth Core)
 
 find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Qt6 REQUIRED COMPONENTS Core)
 
 add_executable(PMPassThrough
   main.cpp
   powersender.h powersender.cpp
   powerreceiver.h powerreceiver.cpp
+  bleservice.h bleservice.cpp
 )
 target_link_libraries(PMPassThrough PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Bluetooth)
+target_link_libraries(PMPassThrough PRIVATE Qt6::Core)
 
 include(GNUInstallDirs)
 install(TARGETS PMPassThrough

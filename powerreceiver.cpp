@@ -110,41 +110,25 @@ void PowerReceiver::pickNext()
     setDevice(m_devices[m_picked]);
 }
 
-void PowerReceiver::startMeasurement()
-{
-    if (alive()) {
-        m_start = QDateTime::currentDateTime();
-        m_min = 0;
-        m_max = 0;
-        m_avg = 0;
-        m_sum = 0;
-        m_calories = 0;
-        m_measuring = true;
-        m_measurements.clear();
-        emit measuringChanged();
-    }
-}
-
-void PowerReceiver::stopMeasurement()
-{
-    m_measuring = false;
-    emit measuringChanged();
-}
-
 //! [Filter HeartRate service 1]
 void PowerReceiver::serviceDiscovered(const QBluetoothUuid &gatt)
 {
-    qDebug() << "gatt is " << gatt;
-    if (gatt == QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower)) {
-        qDebug() << "Power service discovered. Waiting for service scan to be done...";
-        m_foundPowerService = true;
-    }
+    m_gatts.insert(gatt);
 }
 //! [Filter HeartRate service 1]
 
 void PowerReceiver::serviceScanDone()
 {
     qDebug() << "Service scan done.";
+    if (m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower)) &&
+                         m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingSpeedAndCadence)))
+    {
+
+    }
+    else
+    {
+        qDebug() << "Power and Cadence service not found.";
+    }
 
     // Delete old service if available
     if (m_service) {
@@ -216,7 +200,6 @@ void PowerReceiver::serviceStateChanged(QLowEnergyService::ServiceState s)
         break;
     }
 
-    emit aliveChanged();
 }
 //! [Find HRM characteristic]
 
@@ -269,70 +252,6 @@ void PowerReceiver::disconnectService()
         delete m_service;
         m_service = nullptr;
     }
-}
-
-bool PowerReceiver::measuring() const
-{
-    return m_measuring;
-}
-
-bool PowerReceiver::alive() const
-{
-    if (m_service)
-        return m_service->state() == QLowEnergyService::RemoteServiceDiscovered;
-
-    return false;
-}
-
-int PowerReceiver::hr() const
-{
-    return m_currentValue;
-}
-
-int PowerReceiver::time() const
-{
-    return m_start.secsTo(m_stop);
-}
-
-int PowerReceiver::maxHR() const
-{
-    return m_max;
-}
-
-int PowerReceiver::minHR() const
-{
-    return m_min;
-}
-
-float PowerReceiver::average() const
-{
-    return m_avg;
-}
-
-float PowerReceiver::calories() const
-{
-    return m_calories;
-}
-
-void PowerReceiver::addMeasurement(int value)
-{
-    m_currentValue = value;
-
-    // If measuring and value is appropriate
-    if (m_measuring && value > 30 && value < 250) {
-
-        m_stop = QDateTime::currentDateTime();
-        m_measurements << value;
-
-        m_min = m_min == 0 ? value : qMin(value, m_min);
-        m_max = qMax(value, m_max);
-        m_sum += value;
-        m_avg = (double)m_sum / m_measurements.size();
-        m_calories = ((-55.0969 + (0.6309 * m_avg) + (0.1988 * 94) + (0.2017 * 24)) / 4.184)
-                * 60 * time() / 3600;
-    }
-
-    emit statsChanged();
 }
 
 
