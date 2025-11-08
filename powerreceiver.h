@@ -40,6 +40,7 @@ public:
 
 signals:
     void exit();
+    void PowerUpdated(quint16 power, quint16 cadence, quint16 time);
 
 public slots:
     void disconnectService();
@@ -76,6 +77,8 @@ private:
     bool m_measuring = false;
     int m_currentValue = 0, m_min = 0, m_max = 0, m_sum = 0;
     float m_avg = 0, m_calories = 0;
+
+    bool m_foundPowerService;
 
     // Statistics
     QDateTime m_start;

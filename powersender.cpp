@@ -33,11 +33,10 @@ PowerSender::PowerSender(QObject *parent)
 int PowerSender::SetUp()
 {
     //! [Advertising Data]
-    QLowEnergyAdvertisingData advertisingData;
-    advertisingData.setDiscoverability(QLowEnergyAdvertisingData::DiscoverabilityGeneral);
-    advertisingData.setIncludePowerLevel(true);
-    advertisingData.setLocalName("PowerMeterServer");
-    advertisingData.setServices(QList<QBluetoothUuid>() << QBluetoothUuid::ServiceClassUuid::CyclingPower);
+    m_AdvertisingData.setDiscoverability(QLowEnergyAdvertisingData::DiscoverabilityGeneral);
+    m_AdvertisingData.setIncludePowerLevel(true);
+    m_AdvertisingData.setLocalName("PowerMeterServer");
+    m_AdvertisingData.setServices(QList<QBluetoothUuid>() << QBluetoothUuid::ServiceClassUuid::CyclingPower);
     //! [Advertising Data]
 
     //! [Service Data]
@@ -51,9 +50,8 @@ int PowerSender::SetUp()
     //     CyclingPowerVector = 0x2a64,
     //     CyclingPowerFeature = 0x2a65,
     //     CyclingPowerControlPoint = 0x2a66,
-    QLowEnergyServiceData serviceData;
-    serviceData.setType(QLowEnergyServiceData::ServiceTypePrimary);
-    serviceData.setUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower);
+    m_ServiceData.setType(QLowEnergyServiceData::ServiceTypePrimary);
+    m_ServiceData.setUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower);
 
     QLowEnergyCharacteristicData powerMeasurementCharData;
     powerMeasurementCharData.setUuid(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement);
@@ -62,7 +60,7 @@ int PowerSender::SetUp()
     const QLowEnergyDescriptorData pmClientConfig(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration,
                                                   QByteArray(8, 0));
     powerMeasurementCharData.addDescriptor(pmClientConfig);
-    serviceData.addCharacteristic(powerMeasurementCharData);
+    m_ServiceData.addCharacteristic(powerMeasurementCharData);
 
     QLowEnergyCharacteristicData featureCharData;
     QByteArray ft(4,0);
@@ -73,7 +71,7 @@ int PowerSender::SetUp()
     const QLowEnergyDescriptorData clientConfig(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration,
                                                 ft);
     featureCharData.addDescriptor(clientConfig);
-    serviceData.addCharacteristic(featureCharData);
+    m_ServiceData.addCharacteristic(featureCharData);
 
     QLowEnergyCharacteristicData sensorLocationCharData;
     sensorLocationCharData.setUuid(QBluetoothUuid::CharacteristicType::SensorLocation);
@@ -82,67 +80,59 @@ int PowerSender::SetUp()
     const QLowEnergyDescriptorData locClientConfig(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration,
                                                    QByteArray(1, 13));
     sensorLocationCharData.addDescriptor(locClientConfig);
-    serviceData.addCharacteristic(sensorLocationCharData);
+    m_ServiceData.addCharacteristic(sensorLocationCharData);
 
     //! [Service Data]
 
     //! [Start Advertising]
     bool errorOccurred = false;
-    const std::unique_ptr<QLowEnergyController> leController(QLowEnergyController::createPeripheral());
-    auto errorHandler = [&leController, &errorOccurred](QLowEnergyController::Error errorCode) {
-        qWarning().noquote().nospace() << errorCode << " occurred: "
-                                       << leController->errorString();
-        if (errorCode != QLowEnergyController::RemoteHostClosedError) {
-            qWarning("Heartrate-server quitting due to the error.");
-            errorOccurred = true;
-            QCoreApplication::quit();
-        }
-    };
-    QObject::connect(leController.get(), &QLowEnergyController::errorOccurred, errorHandler);
+    m_Controller.reset(QLowEnergyController::createPeripheral());
+    QObject::connect(m_Controller.get(), &QLowEnergyController::errorOccurred, this, &PowerSender::ControllerError);
 
-    std::unique_ptr<QLowEnergyService> service(leController->addService(serviceData));
-    leController->startAdvertising(QLowEnergyAdvertisingParameters(), advertisingData,
-                                   advertisingData);
-    if (errorOccurred)
-        return -1;
-    //! [Start Advertising]
+    m_Service.reset(m_Controller->addService(m_ServiceData));
 
-    //! [Provide Heartbeat]
-    QTimer powermeterTimer;
-    qint16 currentPower = 60;
-    enum ValueChange { ValueUp, ValueDown } valueChange = ValueUp;
-    quint16 t = 0;
-    const auto powerProvider = [&service, &currentPower, &valueChange, &t]() {
-        QByteArray value;
-        QDataStream s(&value, QIODeviceBase::WriteOnly);
-        s.setByteOrder(QDataStream::LittleEndian);
-        s << quint16(0x20) << currentPower << t << (t++)*1024;
-        qDebug() << value;
-        QLowEnergyCharacteristic characteristic
-            = service->characteristic(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement);
-        Q_ASSERT(characteristic.isValid());
-        service->writeCharacteristic(characteristic, value); // Potentially causes notification.
-        if (currentPower == 60)
-            valueChange = ValueUp;
-        else if (currentPower == 100)
-            valueChange = ValueDown;
-        if (valueChange == ValueUp)
-            ++currentPower;
-        else
-            --currentPower;
-    };
-    QObject::connect(&powermeterTimer, &QTimer::timeout, powerProvider);
-    powermeterTimer.start(1000);
-    //! [Provide Heartbeat]
+    m_Controller->startAdvertising(QLowEnergyAdvertisingParameters(), m_AdvertisingData,
+                                   m_AdvertisingData);
 
-    auto reconnect = [&leController, advertisingData, &service, serviceData]() {
-        service.reset(leController->addService(serviceData));
-        if (service) {
-            leController->startAdvertising(QLowEnergyAdvertisingParameters(),
-                                           advertisingData, advertisingData);
-        }
-    };
-    QObject::connect(leController.get(), &QLowEnergyController::disconnected, reconnect);
+
+    QObject::connect(m_Controller.get(), &QLowEnergyController::disconnected, this, &PowerSender::ControllerDisconnected);
 
     return 0;
+}
+
+void PowerSender::UpdatePower(quint16 power, quint16 cadence, quint16 time)
+{
+    QByteArray value;
+    QDataStream s(&value, QIODeviceBase::WriteOnly);
+    s.setByteOrder(QDataStream::LittleEndian);
+    s << quint16(0x20) << power << cadence << time; //(t++)*1024;
+    qDebug() << value;
+    QLowEnergyCharacteristic characteristic
+        = m_Service->characteristic(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement);
+    Q_ASSERT(characteristic.isValid());
+    m_Service->writeCharacteristic(characteristic, value); // Potentially causes notification.
+}
+
+void PowerSender::UpdateCadence()
+{
+
+}
+
+void PowerSender::ControllerError(QLowEnergyController::Error newError)
+{
+    qWarning().noquote().nospace() << newError << " occurred: "
+                                   << m_Controller->errorString();
+    if (newError != QLowEnergyController::RemoteHostClosedError) {
+        qWarning("PowerSender quitting due to the error.");
+        QCoreApplication::quit();
+    }
+}
+
+void PowerSender::ControllerDisconnected()
+{
+    m_Service.reset(m_Controller->addService(m_ServiceData));
+    if (m_Service) {
+        m_Controller->startAdvertising(QLowEnergyAdvertisingParameters(),
+                                       m_AdvertisingData, m_AdvertisingData);
+    }
 }
