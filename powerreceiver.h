@@ -12,6 +12,8 @@
 #include <QList>
 #include <QTimer>
 
+#include "bleservice.h"
+
 class DeviceInfo;
 
 class PowerReceiver : public QObject
@@ -29,14 +31,6 @@ public:
     virtual ~PowerReceiver();
 
     void setDevice( QBluetoothDeviceInfo *device);
-    void pickNext();
-    void setAddressType(AddressType type);
-    AddressType addressType() const;
-
-    bool measuring() const;
-    bool alive() const;
-    int m_picked;
-
 
 signals:
     void exit();
@@ -53,40 +47,23 @@ private:
     //QLowEnergyController
     void serviceDiscovered(const QBluetoothUuid &);
     void serviceScanDone();
-    void connectToService(const QString &address);
-    bool scanning() const;
-    QVariant devices();
-    //QLowEnergyService
-    void serviceStateChanged(QLowEnergyService::ServiceState s);
+
     void updatePowerValue(const QLowEnergyCharacteristic &c,
                               const QByteArray &value);
-    void confirmedDescriptorWrite(const QLowEnergyDescriptor &d,
-                                  const QByteArray &value);
-
-    void updateDemoHR();
-
+    void updateCadenceValue(const QLowEnergyCharacteristic &c,
+                          const QByteArray &value);
 private:
-    void addMeasurement(int value);
     QBluetoothDeviceDiscoveryAgent *m_deviceDiscoveryAgent;
     QLowEnergyController *m_control = nullptr;
-    QLowEnergyService *m_service = nullptr;
+    BLEService *m_power_service = nullptr;
+    BLEService *m_cadence_service = nullptr;
+
     QLowEnergyDescriptor m_notificationDesc;
     QBluetoothDeviceInfo* m_currentDevice;
 
     QSet<QBluetoothUuid> m_gatts;
-    bool m_measuring = false;
-    int m_currentValue = 0, m_min = 0, m_max = 0, m_sum = 0;
-    float m_avg = 0, m_calories = 0;
 
-    bool m_foundPowerService;
-
-    // Statistics
-    QDateTime m_start;
-    QDateTime m_stop;
-
-    QList<int> m_measurements;
-    QLowEnergyController::RemoteAddressType m_addressType = QLowEnergyController::PublicAddress;
-    QList<QBluetoothDeviceInfo*> m_devices;
+    QBluetoothDeviceInfo* m_trainer_device;
 };
 
 #endif // DEVICEHANDLER_H

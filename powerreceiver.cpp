@@ -9,15 +9,16 @@
 #include <qcoreapplication.h>
 
 PowerReceiver::PowerReceiver(QObject *parent) :
+    m_currentDevice(nullptr),
     QObject(parent)
 {
-    QTimer powermeterTimer;
-    QObject::connect(&powermeterTimer, &QTimer::timeout, qApp, &QCoreApplication::quit);
-    powermeterTimer.start(10000);
+    QTimer* powermeterTimer = new QTimer(this);
+    QObject::connect(powermeterTimer, &QTimer::timeout, qApp, &QCoreApplication::quit);
+    powermeterTimer->start(35000);
 
     //! [devicediscovery-1]
     m_deviceDiscoveryAgent = new QBluetoothDeviceDiscoveryAgent(this);
-    m_deviceDiscoveryAgent->setLowEnergyDiscoveryTimeout(5000);
+    m_deviceDiscoveryAgent->setLowEnergyDiscoveryTimeout(20000);
 
     connect(this, &PowerReceiver::exit, qApp, &QCoreApplication::quit);
     connect(m_deviceDiscoveryAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
@@ -34,31 +35,12 @@ PowerReceiver::PowerReceiver(QObject *parent) :
 
 PowerReceiver::~PowerReceiver()
 {
-    m_devices.clear();
-}
-
-void PowerReceiver::setAddressType(AddressType type)
-{
-    switch (type) {
-    case PowerReceiver::AddressType::PublicAddress:
-        m_addressType = QLowEnergyController::PublicAddress;
-        break;
-    case PowerReceiver::AddressType::RandomAddress:
-        m_addressType = QLowEnergyController::RandomAddress;
-        break;
-    }
-}
-
-PowerReceiver::AddressType PowerReceiver::addressType() const
-{
-    if (m_addressType == QLowEnergyController::RandomAddress)
-        return PowerReceiver::AddressType::RandomAddress;
-
-    return PowerReceiver::AddressType::PublicAddress;
+    delete m_currentDevice;
 }
 
 void PowerReceiver::setDevice(QBluetoothDeviceInfo *device)
 {
+    delete m_currentDevice;
     m_currentDevice = device;
 
     // Disconnect and delete old connection
@@ -76,7 +58,7 @@ void PowerReceiver::setDevice(QBluetoothDeviceInfo *device)
         //! [Connect-Signals-1]
         m_control = QLowEnergyController::createCentral(*m_currentDevice, this);
         //! [Connect-Signals-1]
-        m_control->setRemoteAddressType(m_addressType);
+        m_control->setRemoteAddressType(QLowEnergyController::PublicAddress);
         //! [Connect-Signals-2]
         connect(m_control, &QLowEnergyController::serviceDiscovered,
                 this, &PowerReceiver::serviceDiscovered);
@@ -103,13 +85,6 @@ void PowerReceiver::setDevice(QBluetoothDeviceInfo *device)
     }
 }
 
-void PowerReceiver::pickNext()
-{
-    m_picked++;
-    m_picked = m_picked%m_devices.count();
-    setDevice(m_devices[m_picked]);
-}
-
 //! [Filter HeartRate service 1]
 void PowerReceiver::serviceDiscovered(const QBluetoothUuid &gatt)
 {
@@ -119,89 +94,26 @@ void PowerReceiver::serviceDiscovered(const QBluetoothUuid &gatt)
 
 void PowerReceiver::serviceScanDone()
 {
-    qDebug() << "Service scan done.";
-    if (m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower)) &&
-                         m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingSpeedAndCadence)))
+    qDebug() << "Service scan done." << m_gatts;
+    qDebug() << "Cycling power" << m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower));
+    qDebug() << "Speed cadence" << m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingSpeedAndCadence));
+
+    if (m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower)))
     {
-
+        QLowEnergyService* service = m_control->createServiceObject(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower));
+        m_power_service = new BLEService(service, QBluetoothUuid(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement), this);
+        connect(m_power_service, &BLEService::value_changed, this, &PowerReceiver::updatePowerValue);
+        connect(m_power_service, &BLEService::disconnected, this, &PowerReceiver::disconnectService);
     }
-    else
+    if (m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingSpeedAndCadence)))
     {
-        qDebug() << "Power and Cadence service not found.";
+        QLowEnergyService* service = m_control->createServiceObject(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingSpeedAndCadence));
+        m_cadence_service = new BLEService(service, QBluetoothUuid(QBluetoothUuid::CharacteristicType::CSCMeasurement), this);
+        connect(m_cadence_service, &BLEService::value_changed, this, &PowerReceiver::updateCadenceValue);
+        connect(m_cadence_service, &BLEService::disconnected, this, &PowerReceiver::disconnectService);
     }
-
-    // Delete old service if available
-    if (m_service) {
-        delete m_service;
-        m_service = nullptr;
-    }
-
-//! [Filter HeartRate service 2]
-    // If heartRateService found, create new service
-    if (m_foundPowerService)
-        m_service = m_control->createServiceObject(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingPower), this);
-
-    if (m_service) {
-        connect(m_service, &QLowEnergyService::stateChanged, this, &PowerReceiver::serviceStateChanged);
-        connect(m_service, &QLowEnergyService::characteristicChanged, this, &PowerReceiver::updatePowerValue);
-        connect(m_service, &QLowEnergyService::descriptorWritten, this, &PowerReceiver::confirmedDescriptorWrite);
-        m_service->discoverDetails();
-    } else {
-        qDebug() << "Power Service not found.";
-        pickNext();
-    }
-//! [Filter HeartRate service 2]
 }
 
-// Service functions
-//! [Find HRM characteristic]
-void PowerReceiver::serviceStateChanged(QLowEnergyService::ServiceState s)
-{
-    switch (s) {
-    case QLowEnergyService::RemoteServiceDiscovering:
-        qDebug() << "Discovering services...";
-        break;
-    case QLowEnergyService::RemoteServiceDiscovered:
-    {
-        qDebug() << "Service discovered.";
-
-        const QLowEnergyCharacteristic powerChar1 =
-            m_service->characteristic(QBluetoothUuid(QBluetoothUuid::CharacteristicType::CyclingPowerFeature));
-        qDebug() << powerChar1.value();
-
-        const QLowEnergyCharacteristic powerChar =
-                m_service->characteristic(QBluetoothUuid(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement));
-
-        if (!powerChar.isValid()) {
-            qDebug() << "Power Data not found.";
-            break;
-        }
-
-        m_notificationDesc = powerChar.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
-        if (m_notificationDesc.isValid())
-            m_service->writeDescriptor(m_notificationDesc, QByteArray::fromHex("0100"));
-
-        const QLowEnergyCharacteristic cscChar =
-            m_service->characteristic(QBluetoothUuid(QBluetoothUuid::CharacteristicType::CSCMeasurement));
-
-        if (!cscChar.isValid()) {
-            qDebug() << "CSC Data not found.";
-            break;
-        }
-
-        m_notificationDesc = cscChar.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
-        if (m_notificationDesc.isValid())
-            m_service->writeDescriptor(m_notificationDesc, QByteArray::fromHex("0100"));
-
-        break;
-    }
-    default:
-        //nothing for now
-        break;
-    }
-
-}
-//! [Find HRM characteristic]
 
 //! [Reading value]
 void PowerReceiver::updatePowerValue(const QLowEnergyCharacteristic &c, const QByteArray &value)
@@ -224,34 +136,29 @@ void PowerReceiver::updatePowerValue(const QLowEnergyCharacteristic &c, const QB
 
     // addMeasurement(hrvalue);
 }
+
+void PowerReceiver::updateCadenceValue(const QLowEnergyCharacteristic &c, const QByteArray &value)
+{
+    qDebug() << "Update value " << c.uuid();
+    // if (c.uuid() != QBluetoothUuid(QBluetoothUuid::CharacteristicType::HeartRateMeasurement))
+    //     return;
+
+    qDebug() << value;
+}
 //! [Reading value]
 
 
-void PowerReceiver::confirmedDescriptorWrite(const QLowEnergyDescriptor &d, const QByteArray &value)
-{
-    if (d.isValid() && d == m_notificationDesc && value == QByteArray::fromHex("0000")) {
-        //disabled notifications -> assume disconnect intent
-        m_control->disconnectFromDevice();
-        delete m_service;
-        m_service = nullptr;
-    }
-}
-
 void PowerReceiver::disconnectService()
 {
-    m_foundPowerService = false;
+    if (m_power_service) m_power_service->disable_notifications();
+    if (m_cadence_service) m_cadence_service->disable_notifications();
 
-    //disable notifications
-    if (m_notificationDesc.isValid() && m_service
-            && m_notificationDesc.value() == QByteArray::fromHex("0100")) {
-        m_service->writeDescriptor(m_notificationDesc, QByteArray::fromHex("0000"));
-    } else {
-        if (m_control)
-            m_control->disconnectFromDevice();
+    m_control->disconnectFromDevice();
 
-        delete m_service;
-        m_service = nullptr;
-    }
+    delete m_power_service;
+    m_power_service = nullptr;
+    delete m_cadence_service;
+    m_cadence_service = nullptr;
 }
 
 
@@ -274,9 +181,6 @@ void PowerReceiver::startSearch()
     //! [permissions]
 #endif // QT_CONFIG(permissions)
     setDevice(nullptr);
-    qDeleteAll(m_devices);
-    m_devices.clear();
-
     //! [devicediscovery-2]
     m_deviceDiscoveryAgent->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
     //! [devicediscovery-2]
@@ -290,21 +194,7 @@ void PowerReceiver::addDevice(const QBluetoothDeviceInfo &device)
     qDebug() << "Low Energy device found: " << device.name() << " Scanning more...";
     if (device.name() != "Victory") return;
 
-    // If device is LowEnergy-device, add it to the list
-    if (device.coreConfigurations() & QBluetoothDeviceInfo::LowEnergyCoreConfiguration) {
-        auto devInfo = new QBluetoothDeviceInfo(device);
-        auto it = std::find_if(m_devices.begin(), m_devices.end(),
-                               [devInfo](QBluetoothDeviceInfo *dev) {
-                                   return devInfo->address() == dev->address();
-                               });
-        if (it == m_devices.end()) {
-            m_devices.append(devInfo);
-        } else {
-            auto oldDev = *it;
-            *it = devInfo;
-            delete oldDev;
-        }
-    }
+    setDevice(new QBluetoothDeviceInfo(device));
     //...
 }
 //! [devicediscovery-4]
@@ -321,40 +211,5 @@ void PowerReceiver::scanError(QBluetoothDeviceDiscoveryAgent::Error error)
 
 void PowerReceiver::scanFinished()
 {
-    if (m_devices.isEmpty()) {
-        qDebug() << "No Low Energy devices found.";
-    } else {
-        qDebug() << "Scanning done.";
-    }
 
-    m_picked = -1;
-    pickNext();
-}
-
-
-void PowerReceiver::connectToService(const QString &address)
-{
-    m_deviceDiscoveryAgent->stop();
-
-    QBluetoothDeviceInfo *currentDevice = nullptr;
-    for (QBluetoothDeviceInfo *entry : std::as_const(m_devices)) {
-        if (entry && entry->address() == QBluetoothAddress(address)) {
-            currentDevice = entry;
-            break;
-        }
-    }
-
-    if (currentDevice)
-        setDevice(currentDevice);
-
-}
-
-bool PowerReceiver::scanning() const
-{
-    return m_deviceDiscoveryAgent->isActive();
-}
-
-QVariant PowerReceiver::devices()
-{
-    return QVariant::fromValue(m_devices);
 }
