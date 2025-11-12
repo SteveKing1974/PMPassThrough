@@ -9,10 +9,30 @@ BLEService::BLEService(QLowEnergyService* service,
     if (m_service) {
         m_service->setParent(this);
         connect(m_service, &QLowEnergyService::stateChanged, this, &BLEService::serviceStateChanged);
-        connect(m_service, &QLowEnergyService::characteristicChanged, this, &BLEService::value_changed);
+        connect(m_service, &QLowEnergyService::characteristicChanged, this, &BLEService::confirmedCharactoristicValueChanged);
+        connect(m_service, &QLowEnergyService::characteristicRead, this, &BLEService::confirmedCharactoristicRead);
         connect(m_service, &QLowEnergyService::descriptorWritten, this, &BLEService::confirmedDescriptorWrite);
         m_service->discoverDetails();
     }
+}
+
+QList<QLowEnergyCharacteristic> BLEService::characteristics() const
+{
+    return m_service->characteristics();
+}
+
+bool BLEService::read_value(const QBluetoothUuid &c)
+{
+    const QLowEnergyCharacteristic read_char = m_service->characteristic(c);
+
+    if (!read_char.isValid()) {
+        qDebug() << "Wrong read char" << c;
+        return false;
+    }
+
+    m_service->readCharacteristic(read_char);
+
+    return true;
 }
 
 void BLEService::disable_notifications()
@@ -32,6 +52,16 @@ void BLEService::confirmedDescriptorWrite(const QLowEnergyDescriptor &d, const Q
     }
 }
 
+void BLEService::confirmedCharactoristicRead(const QLowEnergyCharacteristic &c, const QByteArray &value)
+{
+    emit value_read(c.uuid(), value);
+}
+
+void BLEService::confirmedCharactoristicValueChanged(const QLowEnergyCharacteristic &c, const QByteArray &value)
+{
+    emit value_changed(c.uuid(), value);
+}
+
 void BLEService::serviceStateChanged(QLowEnergyService::ServiceState s)
 {
     switch (s) {
@@ -40,36 +70,21 @@ void BLEService::serviceStateChanged(QLowEnergyService::ServiceState s)
         break;
     case QLowEnergyService::RemoteServiceDiscovered:
     {
-        qDebug() << "Service discovered.";
+        qDebug() << m_notification_char << "Service discovered.";
 
-        const QLowEnergyCharacteristic powerChar1 =
-            m_service->characteristic(QBluetoothUuid(QBluetoothUuid::CharacteristicType::CyclingPowerFeature));
-        qDebug() << powerChar1.value();
+        const QLowEnergyCharacteristic notify_char =
+            m_service->characteristic(m_notification_char);
 
-        const QLowEnergyCharacteristic powerChar =
-            m_service->characteristic(QBluetoothUuid(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement));
-
-        if (!powerChar.isValid()) {
-            qDebug() << "Power Data not found.";
+        if (!notify_char.isValid()) {
+            qDebug() << "Wrong notify char" << m_notification_char;
             break;
         }
 
-        m_notificationDesc = powerChar.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
+        m_notificationDesc = notify_char.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
         if (m_notificationDesc.isValid())
             m_service->writeDescriptor(m_notificationDesc, QByteArray::fromHex("0100"));
 
-        const QLowEnergyCharacteristic cscChar =
-            m_service->characteristic(QBluetoothUuid(QBluetoothUuid::CharacteristicType::CSCMeasurement));
-
-        if (!cscChar.isValid()) {
-            qDebug() << "CSC Data not found.";
-            break;
-        }
-
-        m_notificationDesc = cscChar.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
-        if (m_notificationDesc.isValid())
-            m_service->writeDescriptor(m_notificationDesc, QByteArray::fromHex("0100"));
-
+        emit discovery_complete();
         break;
     }
     default:

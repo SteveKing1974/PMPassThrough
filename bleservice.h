@@ -5,8 +5,7 @@
 #include <QBluetoothUuid>
 #include <QLowEnergyDescriptor>
 #include <QLowEnergyService>
-
-class QLowEnergyCharacteristic;
+#include <QLowEnergyCharacteristic>
 
 class BLEService : public QObject
 {
@@ -18,14 +17,21 @@ public:
 
 public:
     void disable_notifications();
+    bool read_value(const QBluetoothUuid &c);
+    QList<QLowEnergyCharacteristic> characteristics() const;
 
 signals:
     void disconnected();
-    void value_changed(const QLowEnergyCharacteristic &c,
+    void discovery_complete();
+    void value_changed(const QBluetoothUuid &c,
                        const QByteArray &value);
-
+    void value_read(const QBluetoothUuid &c,
+                       const QByteArray &value);
 private slots:
     void confirmedDescriptorWrite(const QLowEnergyDescriptor &d, const QByteArray &value);
+    void confirmedCharactoristicRead(const QLowEnergyCharacteristic &c, const QByteArray &value);
+    void confirmedCharactoristicValueChanged(const QLowEnergyCharacteristic &dc, const QByteArray &value);
+
     void serviceStateChanged(QLowEnergyService::ServiceState s);
 
 private:

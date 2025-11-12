@@ -13,6 +13,7 @@
 #include <QTimer>
 
 #include "bleservice.h"
+#include "powersender.h"
 
 class DeviceInfo;
 
@@ -30,7 +31,7 @@ public:
     PowerReceiver(QObject *parent = nullptr);
     virtual ~PowerReceiver();
 
-    void setDevice( QBluetoothDeviceInfo *device);
+    void connectDevice();
 
 signals:
     void exit();
@@ -44,14 +45,19 @@ public slots:
     void startSearch();
 
 private:
-    //QLowEnergyController
     void serviceDiscovered(const QBluetoothUuid &);
     void serviceScanDone();
 
-    void updatePowerValue(const QLowEnergyCharacteristic &c,
+    void updatePowerValue(const QBluetoothUuid &c,
                               const QByteArray &value);
-    void updateCadenceValue(const QLowEnergyCharacteristic &c,
+    void updateCadenceValue(const QBluetoothUuid &c,
                           const QByteArray &value);
+
+    void powerConnected();
+    void cadenceConnected();
+
+    void readComplete(const QBluetoothUuid &c,
+                      const QByteArray &value);
 private:
     QBluetoothDeviceDiscoveryAgent *m_deviceDiscoveryAgent;
     QLowEnergyController *m_control = nullptr;
@@ -64,6 +70,11 @@ private:
     QSet<QBluetoothUuid> m_gatts;
 
     QBluetoothDeviceInfo* m_trainer_device;
+
+    QList<QBluetoothUuid> m_waitingRead;
+    QMap<QBluetoothUuid, QByteArray> m_readDone;
+
+    PowerSender* m_Sender;
 };
 
 #endif // DEVICEHANDLER_H

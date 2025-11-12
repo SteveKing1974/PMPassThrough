@@ -13,22 +13,29 @@ class PowerSender : public QObject
 public:
     explicit PowerSender(QObject *parent = nullptr);
     
-    int SetUp();
+    int SetUp(const QMap<QBluetoothUuid, QByteArray>& characteristics);
 
 public slots:
     void UpdatePower(quint16 power, quint16 cadence, quint16 time);
-    void UpdateCadence();
+    void UpdatePower(const QBluetoothUuid &c,
+                     const QByteArray &value);
+    void UpdateCadence(const QBluetoothUuid &c,
+                       const QByteArray &value);
 
 private slots:
     void ControllerError(QLowEnergyController::Error newError);
     void ControllerDisconnected();
 
 private:
-    std::unique_ptr<QLowEnergyService> m_Service;
+    std::unique_ptr<QLowEnergyService> m_PowerService;
+    std::unique_ptr<QLowEnergyService> m_CSCService;
     std::unique_ptr<QLowEnergyController> m_Controller;
 
     QLowEnergyAdvertisingData m_AdvertisingData;
-    QLowEnergyServiceData m_ServiceData;
+    QLowEnergyServiceData m_PowerServiceData;
+    QLowEnergyServiceData m_CSCServiceData;
+
+    bool m_SetupComplete;
 };
 
 #endif // POWERSENDER_H

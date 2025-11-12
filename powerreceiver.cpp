@@ -10,15 +10,17 @@
 
 PowerReceiver::PowerReceiver(QObject *parent) :
     m_currentDevice(nullptr),
+    m_control(nullptr),
     QObject(parent)
 {
+    m_Sender = new PowerSender(this);
     QTimer* powermeterTimer = new QTimer(this);
-    QObject::connect(powermeterTimer, &QTimer::timeout, qApp, &QCoreApplication::quit);
-    powermeterTimer->start(35000);
+    QObject::connect(powermeterTimer, &QTimer::timeout, this, &PowerReceiver::disconnectService);
+    powermeterTimer->start(85000);
 
     //! [devicediscovery-1]
     m_deviceDiscoveryAgent = new QBluetoothDeviceDiscoveryAgent(this);
-    m_deviceDiscoveryAgent->setLowEnergyDiscoveryTimeout(20000);
+    m_deviceDiscoveryAgent->setLowEnergyDiscoveryTimeout(10000);
 
     connect(this, &PowerReceiver::exit, qApp, &QCoreApplication::quit);
     connect(m_deviceDiscoveryAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
@@ -35,14 +37,12 @@ PowerReceiver::PowerReceiver(QObject *parent) :
 
 PowerReceiver::~PowerReceiver()
 {
+    disconnectService();
     delete m_currentDevice;
 }
 
-void PowerReceiver::setDevice(QBluetoothDeviceInfo *device)
+void PowerReceiver::connectDevice()
 {
-    delete m_currentDevice;
-    m_currentDevice = device;
-
     // Disconnect and delete old connection
     if (m_control) {
         m_control->disconnectFromDevice();
@@ -77,6 +77,7 @@ void PowerReceiver::setDevice(QBluetoothDeviceInfo *device)
         });
         connect(m_control, &QLowEnergyController::disconnected, this, [this]() {
             qDebug() << "LowEnergy controller disconnected";
+            qApp->exit();
         });
 
         // Connect
@@ -104,6 +105,8 @@ void PowerReceiver::serviceScanDone()
         m_power_service = new BLEService(service, QBluetoothUuid(QBluetoothUuid::CharacteristicType::CyclingPowerMeasurement), this);
         connect(m_power_service, &BLEService::value_changed, this, &PowerReceiver::updatePowerValue);
         connect(m_power_service, &BLEService::disconnected, this, &PowerReceiver::disconnectService);
+        connect(m_power_service, &BLEService::discovery_complete, this, &PowerReceiver::powerConnected);
+        connect(m_power_service, &BLEService::value_read, this, &PowerReceiver::readComplete);
     }
     if (m_gatts.contains(QBluetoothUuid(QBluetoothUuid::ServiceClassUuid::CyclingSpeedAndCadence)))
     {
@@ -111,19 +114,55 @@ void PowerReceiver::serviceScanDone()
         m_cadence_service = new BLEService(service, QBluetoothUuid(QBluetoothUuid::CharacteristicType::CSCMeasurement), this);
         connect(m_cadence_service, &BLEService::value_changed, this, &PowerReceiver::updateCadenceValue);
         connect(m_cadence_service, &BLEService::disconnected, this, &PowerReceiver::disconnectService);
+        connect(m_cadence_service, &BLEService::discovery_complete, this, &PowerReceiver::cadenceConnected);
+        connect(m_cadence_service, &BLEService::value_read, this, &PowerReceiver::readComplete);
     }
 }
 
+void PowerReceiver::powerConnected()
+{
+    foreach (QLowEnergyCharacteristic c, m_power_service->characteristics()) {
+        if (c.properties() & QLowEnergyCharacteristic::Read)
+        {
+            m_power_service->read_value(c.uuid());
+            m_waitingRead.append(c.uuid());
+        }
+    }
+}
+
+void PowerReceiver::cadenceConnected()
+{
+    // foreach (QLowEnergyCharacteristic c, m_cadence_service->characteristics()) {
+    //     if (c.properties() & QLowEnergyCharacteristic::Read)
+    //         m_cadence_service->read_value(c.uuid());
+    // }
+    //m_cadence_service->read_value(QBluetoothUuid::CharacteristicType::CyclingPowerFeature);
+}
+
+void PowerReceiver::readComplete(const QBluetoothUuid &c,
+                  const QByteArray &value)
+{
+    m_waitingRead.removeOne(c);
+    m_readDone[c] = value;
+    qDebug() << "Read " << c << value;
+
+    if (m_waitingRead.isEmpty())
+    {
+        m_Sender->SetUp(m_readDone);
+    }
+}
 
 //! [Reading value]
-void PowerReceiver::updatePowerValue(const QLowEnergyCharacteristic &c, const QByteArray &value)
+void PowerReceiver::updatePowerValue(const QBluetoothUuid &c, const QByteArray &value)
 {
     // ignore any other characteristic change -> shouldn't really happen though
-    qDebug() << "Update value " << c.uuid();
+    qDebug() << "Update power value " << c;
     // if (c.uuid() != QBluetoothUuid(QBluetoothUuid::CharacteristicType::HeartRateMeasurement))
     //     return;
 
     qDebug() << value;
+
+    m_Sender->UpdatePower(c, value);
     // auto data = reinterpret_cast<const quint8 *>(value.constData());
     // quint8 flags = *data;
 
@@ -137,9 +176,9 @@ void PowerReceiver::updatePowerValue(const QLowEnergyCharacteristic &c, const QB
     // addMeasurement(hrvalue);
 }
 
-void PowerReceiver::updateCadenceValue(const QLowEnergyCharacteristic &c, const QByteArray &value)
+void PowerReceiver::updateCadenceValue(const QBluetoothUuid &c, const QByteArray &value)
 {
-    qDebug() << "Update value " << c.uuid();
+    qDebug() << "Update cadence value " << c;
     // if (c.uuid() != QBluetoothUuid(QBluetoothUuid::CharacteristicType::HeartRateMeasurement))
     //     return;
 
@@ -161,7 +200,6 @@ void PowerReceiver::disconnectService()
     m_cadence_service = nullptr;
 }
 
-
 void PowerReceiver::startSearch()
 {
 #if QT_CONFIG(permissions)
@@ -180,7 +218,6 @@ void PowerReceiver::startSearch()
     }
     //! [permissions]
 #endif // QT_CONFIG(permissions)
-    setDevice(nullptr);
     //! [devicediscovery-2]
     m_deviceDiscoveryAgent->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
     //! [devicediscovery-2]
@@ -194,7 +231,8 @@ void PowerReceiver::addDevice(const QBluetoothDeviceInfo &device)
     qDebug() << "Low Energy device found: " << device.name() << " Scanning more...";
     if (device.name() != "Victory") return;
 
-    setDevice(new QBluetoothDeviceInfo(device));
+    delete m_currentDevice;
+    m_currentDevice = new QBluetoothDeviceInfo(device);
     //...
 }
 //! [devicediscovery-4]
@@ -211,5 +249,7 @@ void PowerReceiver::scanError(QBluetoothDeviceDiscoveryAgent::Error error)
 
 void PowerReceiver::scanFinished()
 {
-
+    qDebug() << "Scan complete" << m_currentDevice;
+    if (m_currentDevice)
+        connectDevice();
 }
